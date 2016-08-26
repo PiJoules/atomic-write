@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdarg.h>
 
 // Permissions
 #define READ 0444
@@ -17,9 +18,18 @@
 typedef struct AtomicFileQueue AtomicFileQueue;
 typedef struct AtomicFile AtomicFile;
 
+/**
+ * AtomicFile is the struct exposed to the user to hide the implementation
+ * of AtomicFileQueue.
+ */
+struct AtomicFile {
+    AtomicFileQueue* queue;
+    const char* filename;
+};
+
 // Public API functions
 AtomicFile* atomic_file(const char* filename);
-void atomic_file_write(AtomicFile, const char*);
+void atomic_file_write(AtomicFile*, const char*);
 void atomic_file_free(AtomicFile* file);
 
 

@@ -1,6 +1,29 @@
 #include "atomic_file.h"
 
+static const size_t default_buff_size = 1024;
+static int close_file = 0;
+
 typedef struct ShmSegment ShmSegment;
+typedef struct AtomicFileQueueNode AtomicFileQueueNode;
+typedef struct Message Message;
+
+
+struct Message {
+    const char* fmt;
+    const va_list args;
+};
+
+struct AtomicFileQueueNode {
+    ShmSegment* data;
+    AtomicFileQueueNode* next;
+};
+
+struct AtomicFileQueue {
+    AtomicFileQueueNode* head;
+    size_t size;
+};
+
+
 typedef enum {
     AVAILABLE,  // Nothing happening to shm
     WRITING,  // Something currently being written to shm
@@ -11,18 +34,22 @@ struct ShmSegment {
     int id;
     ShmSegmentStatus status;
     size_t buffer_size;
+    int permissions;
     void* buffer_start;  // Address of this pointer is start of shared mem. This must be at the end.
 };
 
 
 // Private API functions
-ShmSegment* create_shm_seg(key_t, size_t, int);
+ShmSegment* shmalloc(key_t, size_t, int);
+ShmSegment* shmrealloc(ShmSegment*, size_t);
 void detatch_shm_seg(ShmSegment*);
 void free_shm_seg(ShmSegment*);
 int shm_seg_is_up(key_t);
-void write_to_shm_seg(ShmSegment*, const char*);
+void write_to_shm_seg(ShmSegment*, const void*, size_t);
 void* buffer_start(const ShmSegment*);
 key_t str_to_key(const char*);
+void* process_queue(void*);
+void free_atomic_file_queue_node(AtomicFileQueueNode* node);
 
 
 /**
@@ -43,7 +70,7 @@ key_t str_to_key(const char* str){
 /**
  * Create and initiualize the shared memory segment.
  */
-ShmSegment* create_shm_seg(key_t key, size_t size, int permissions){
+ShmSegment* shmalloc(key_t key, size_t size, int permissions){
     if (!(permissions & WRITE)){
         fprintf(stderr, "The permissions given must include WRITE in order to initiualize default values for the shared memory segment.\n");
         return NULL;
@@ -80,8 +107,20 @@ ShmSegment* create_shm_seg(key_t key, size_t size, int permissions){
     seg->key = key;
     seg->id = shmid;
     seg->buffer_size = size;
+    seg->permissions = permissions;
 
     return (ShmSegment*)shm_addr;
+}
+
+
+/**
+ * Resize the shared memory segment.
+ * Just delete the old one and return a new one.
+ */
+ShmSegment* shmrealloc(ShmSegment* seg, size_t size){
+    ShmSegment* new_seg = shmalloc(seg->key, size, seg->permissions);
+    free_shm_seg(seg);
+    return new_seg;
 }
 
 
@@ -126,7 +165,7 @@ int shm_seg_is_up(key_t key){
 
 
 /**
- * Return the address of shared memory where we cna start writing.
+ * Return the address of shared memory where we can start writing.
  */
 void* buffer_start(const ShmSegment* seg){
     return (void*)(&(seg->buffer_start));
@@ -136,7 +175,7 @@ void* buffer_start(const ShmSegment* seg){
 /**
  * Copy the string to the shared memory segment buffer.
  */
-void write_to_shm_seg(ShmSegment* seg, const char* str){
+void write_to_shm_seg(ShmSegment* seg, const void* bytes, size_t size){
     // Wait until available
     while (seg->status != AVAILABLE){
         sleep(1);
@@ -144,9 +183,95 @@ void write_to_shm_seg(ShmSegment* seg, const char* str){
 
     // Segment will now be written to
     seg->status = WRITING;
-    size_t len = strlen(str);
-    memcpy(buffer_start(seg), str, len);
+    memcpy(buffer_start(seg), bytes, size);
 
     // Now available
     seg->status = AVAILABLE;
+}
+
+
+void free_atomic_file_queue_node(AtomicFileQueueNode* node){
+    free_shm_seg(node->data);
+    free(node);
+}
+
+
+void* process_queue(void* args){
+    AtomicFile* file = (AtomicFile*)args;
+    AtomicFileQueue* queue = file->queue;
+    AtomicFileQueueNode* head = queue->head;
+    FILE* f = fopen(file->filename, "a");
+
+    while (!close_file){
+        while (head){
+            // Process and print text to file
+            const Message* msg = (Message*)(buffer_start(head->data));
+            const char* str = 
+
+            // Free node
+            AtomicFileQueueNode* next = head->next;
+            free_atomic_file_queue_node(head);
+            head = next;
+        }
+        sleep(1);  // Do not bombard cpu with check operations
+    }
+    fclose(f);
+
+    return NULL;
+}
+
+
+/**
+ * The atomic file will be a pointer to a queue.
+ * If it has not yet started, que
+ */
+AtomicFile* atomic_file(const char* filename){
+    // Create the file and queue
+    AtomicFile* file = (AtomicFile*)malloc(sizeof(AtomicFile));
+    if (!file){
+        perror("malloc failed");
+        return NULL;
+    }
+
+    AtomicFileQueue* queue = (AtomicFileQueue*)malloc(sizeof(AtomicFileQueue));
+    if (!queue){
+        perror("malloc failed");
+        return NULL;
+    }
+    file->queue = queue;
+    queue->head = NULL;
+    queue->size = 0;
+
+
+    // Start a new thread
+    //pthread_t pt;
+    //pthread_create(&pt, NULL, compute_gold_wrapper, &args[i]);
+
+    return file;
+}
+
+
+/**
+ * Add a new node to the queue.
+ */
+void atomic_file_write(AtomicFile* file, const char* str){
+
+}
+
+
+void atomic_file_free(AtomicFile* file){
+    AtomicFileQueue* queue = file->queue;
+    AtomicFileQueueNode* current = queue->head;
+    while (current){
+        AtomicFileQueueNode* next = current->next;
+
+        // Free this node and the shm segment
+        free_shm_seg(current->data);
+        free(current);
+
+        current = next;
+    }
+
+    free(file->queue);
+    free(file);
 }
