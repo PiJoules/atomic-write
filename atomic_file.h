@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
+#include <pthread.h>
 
 // Permissions
 #define READ 0444
@@ -29,7 +30,7 @@ struct AtomicFile {
 
 // Public API functions
 AtomicFile* atomic_file(const char* filename);
-void atomic_file_write(AtomicFile*, const char*);
+void atomic_file_write(AtomicFile*, const char*, ...);
 void atomic_file_free(AtomicFile* file);
 
 

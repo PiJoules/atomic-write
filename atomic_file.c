@@ -8,11 +8,6 @@ typedef struct AtomicFileQueueNode AtomicFileQueueNode;
 typedef struct Message Message;
 
 
-struct Message {
-    const char* fmt;
-    const va_list args;
-};
-
 struct AtomicFileQueueNode {
     ShmSegment* data;
     AtomicFileQueueNode* next;
@@ -20,7 +15,9 @@ struct AtomicFileQueueNode {
 
 struct AtomicFileQueue {
     AtomicFileQueueNode* head;
+    AtomicFileQueueNode* last;
     size_t size;
+    pthread_t* thread;
 };
 
 
@@ -50,6 +47,7 @@ void* buffer_start(const ShmSegment*);
 key_t str_to_key(const char*);
 void* process_queue(void*);
 void free_atomic_file_queue_node(AtomicFileQueueNode* node);
+key_t next_key(key_t key);
 
 
 /**
@@ -205,8 +203,14 @@ void* process_queue(void* args){
     while (!close_file){
         while (head){
             // Process and print text to file
-            const Message* msg = (Message*)(buffer_start(head->data));
-            const char* str = 
+            Message* msg = (Message*)(buffer_start(head->data));
+            const char* str = msg->fmt;
+            va_list args;
+            va_copy(args, msg->args);
+
+            vfprintf(f, str, args);
+
+            va_end(args);
 
             // Free node
             AtomicFileQueueNode* next = head->next;
@@ -240,22 +244,46 @@ AtomicFile* atomic_file(const char* filename){
     }
     file->queue = queue;
     queue->head = NULL;
+    queue->head = NULL;
     queue->size = 0;
 
 
     // Start a new thread
-    //pthread_t pt;
-    //pthread_create(&pt, NULL, compute_gold_wrapper, &args[i]);
+    pthread_t* pt = (pthread_t*)malloc(sizeof(pthread_t));
+    if (!pt){
+        perror("malloc failed");
+        free(queue);
+        free(file);
+        return NULL;
+    }
+    queue->thread = pt;
+    pthread_create(pt, NULL, process_queue, file);
 
     return file;
+}
+
+
+key_t next_key(key_t key){
+    key_t next = key + 1;
+    while (!shm_seg_is_up(next)){
+        next++;
+    }
+    return next;
 }
 
 
 /**
  * Add a new node to the queue.
  */
-void atomic_file_write(AtomicFile* file, const char* str){
-
+void atomic_file_write(AtomicFile* file, const char* str, ...){
+    AtomicFileQueue* queue = file->queue;
+    AtomicFileQueueNode* head = queue->head;
+    ShmSegment* seg = shmalloc(next_key(head->data->key), sizeof(ShmSegment), IPC_CREAT | READ | WRITE);
+    Message msg;
+    size_t len = sizeof(str);
+    msg.fmt = (char*)malloc(sizeof(char) * len);
+    strncpy(msg.fmt, str, len);
+    va_copy(msg.args, )
 }
 
 
@@ -272,6 +300,8 @@ void atomic_file_free(AtomicFile* file){
         current = next;
     }
 
-    free(file->queue);
+    pthread_join(*(queue->thread), NULL);
+    free(queue->thread);
+    free(queue);
     free(file);
 }
