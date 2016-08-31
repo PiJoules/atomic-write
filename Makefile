@@ -16,5 +16,6 @@ valgrind: $(EXE)
 	valgrind --leak-check=yes ./test_atomic
 
 test: valgrind
+	@echo $(ipcs -m | grep $USER)
 
 

@@ -1,4 +1,5 @@
 test_atomic
+test.log
 
 # Prerequisites
 *.d
