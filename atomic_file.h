@@ -44,7 +44,7 @@ struct AtomicFile {
 
 // Public API functions
 AtomicFile* atomic_file(const char* filename, const char* mode);
-void atomic_file_write(AtomicFile*, const char*, ...);
+void atomic_file_write(AtomicFile*, const char*, va_list);
 void atomic_file_close(AtomicFile* file);
 
 

@@ -58,7 +58,8 @@ key_t str_to_key(const char*);
 key_t str_to_key(const char* str){
     int hash = 5381;
 
-    for (int i = 0; *(str + i); i++){
+    int i;
+    for (i = 0; *(str + i); i++){
         int c = (int)str[i];
         hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
     }
@@ -104,10 +105,18 @@ ShmSegment* shmalloc(key_t key, size_t size, int permissions){
 
     // Create and copy the node into shared mem
     ShmSegment* seg = (ShmSegment*)shm_addr;
+    if (permissions & IPC_CREAT){
+        seg->status = AVAILABLE;
+    }
     seg->key = key;
     seg->id = shmid;
     seg->buffer_size = size;
     seg->permissions = permissions;
+
+    if (shmctl(shmid, IPC_RMID, NULL) == -1){
+       perror("shmctl");
+       exit(EXIT_FAILURE);
+    }
 
     return (ShmSegment*)shm_addr;
 }
@@ -208,17 +217,16 @@ AtomicFile* atomic_file(const char* filename, const char* mode){
 /**
  * Wait to write.
  */
-void atomic_file_write(AtomicFile* file, const char* str, ...){
+void atomic_file_write(AtomicFile* file, const char* str, va_list ap){
     ShmSegment* seg = file->node->segment;
+    FILE* fp = file->node->file_pointer;
     while (seg->status != AVAILABLE){
-        usleep(1000);  // 1 ms
+        usleep(1000);
     }
     seg->status = WRITING;
 
-    va_list ap;
-    va_start(ap, str);
-    vfprintf(file->node->file_pointer, str, ap);
-    va_end(ap);
+    vfprintf(fp, str, ap);
+    fflush(fp);
 
     seg->status = AVAILABLE;
 }
@@ -228,12 +236,7 @@ void atomic_file_close(AtomicFile* file){
     AtomicFileNode* node = file->node;
     ShmSegment* seg = node->segment;
     
-    if (node->did_create_shm_seg){
-        free_shm_seg(seg);
-    }
-    else {
-        detatch_shm_seg(seg);
-    }
+    detatch_shm_seg(seg);
 
     fclose(node->file_pointer);
     free(node);
